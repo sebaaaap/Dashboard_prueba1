@@ -12,7 +12,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:8080",  # Para desarrollo
+        "http://localhost:5173",  # Para desarrollo
         "https://tudominio-frontend.com"  # Tu dominio de frontend en producción
     ],  # En producción, especifica los dominios
     allow_credentials=True,
