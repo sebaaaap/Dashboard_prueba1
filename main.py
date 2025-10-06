@@ -12,13 +12,15 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",  # Para desarrollo
-        "https://tudominio-frontend.com"  # Tu dominio de frontend en producción
-    ],  # En producción, especifica los dominios
+        "http://localhost:5173",  # Puerto correcto para desarrollo
+        "https://id-preview--2aaeff70-7c87-42b0-af74-805ca1870d39.lovable.app",  # Lovable preview
+        "https://dashboardprueba1-production.up.railway.app"  # Tu backend Railway
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # Incluir rutas
 app.include_router(upload_router)
