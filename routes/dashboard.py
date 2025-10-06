@@ -464,3 +464,260 @@ async def get_consumo_semanal():
         
     except Exception as e:
         return {"success": False, "data": None, "error": str(e)}
+    
+@router.get("/dashboard/revenue")
+async def get_revenue(
+    periodo: str = Query("semana", description="Periodo: hoy, semana, mes"),
+    fecha_inicio: Optional[str] = Query(None),
+    fecha_fin: Optional[str] = Query(None)
+):
+    try:
+        collections = mongodb.get_collections()
+        
+        hoy = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Determinar el rango de fechas según el periodo
+        if periodo == "hoy":
+            fecha_inicio = hoy
+            fecha_fin = hoy
+        elif periodo == "semana":
+            fecha_inicio = hoy - timedelta(days=hoy.weekday())
+            fecha_fin = hoy
+        elif periodo == "mes":
+            fecha_inicio = hoy.replace(day=1)
+            fecha_fin = hoy
+        else:
+            # Usar fechas personalizadas si se proporcionan
+            if fecha_inicio and fecha_fin:
+                fecha_inicio = datetime.fromisoformat(fecha_inicio)
+                fecha_fin = datetime.fromisoformat(fecha_fin)
+            else:
+                fecha_inicio = hoy - timedelta(days=7)
+                fecha_fin = hoy
+        
+        pipeline = [
+            {"$match": {
+                "fecha": {
+                    "$gte": fecha_inicio,
+                    "$lte": fecha_fin
+                }
+            }},
+            {"$group": {
+                "_id": None,
+                "ingresos_totales": {"$sum": "$ingresos_totales"},
+                "servicios_atendidos": {"$sum": "$servicios_atendidos"},
+                "ganancia_neta": {"$sum": "$ganancia_neta"},
+                "dias_operacion": {"$sum": 1}
+            }}
+        ]
+        
+        resultados = list(collections["dias_operacion"].aggregate(pipeline))
+        
+        if resultados:
+            data = {
+                "ingresos_totales": resultados[0]["ingresos_totales"],
+                "servicios_atendidos": resultados[0]["servicios_atendidos"],
+                "ganancia_neta": resultados[0]["ganancia_neta"],
+                "dias_operacion": resultados[0]["dias_operacion"],
+                "ticket_promedio": round(resultados[0]["ingresos_totales"] / resultados[0]["servicios_atendidos"], 2) if resultados[0]["servicios_atendidos"] > 0 else 0,
+                "periodo": {
+                    "fecha_inicio": fecha_inicio.strftime("%Y-%m-%d"),
+                    "fecha_fin": fecha_fin.strftime("%Y-%m-%d"),
+                    "tipo": periodo
+                }
+            }
+        else:
+            data = {
+                "ingresos_totales": 0,
+                "servicios_atendidos": 0,
+                "ganancia_neta": 0,
+                "dias_operacion": 0,
+                "ticket_promedio": 0,
+                "periodo": {
+                    "fecha_inicio": fecha_inicio.strftime("%Y-%m-%d"),
+                    "fecha_fin": fecha_fin.strftime("%Y-%m-%d"),
+                    "tipo": periodo
+                }
+            }
+        
+        return formato_respuesta(data)
+        
+    except Exception as e:
+        return {"success": False, "data": None, "error": str(e)}
+
+@router.get("/dashboard/services")
+async def get_services(
+    periodo: Optional[str] = Query("semana"),
+    fecha_inicio: Optional[str] = Query(None),
+    fecha_fin: Optional[str] = Query(None)
+):
+    """Ruta VERDADERA - Solo datos reales de la base de datos"""
+    try:
+        collections = mongodb.get_collections()
+        
+        hoy = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Determinar fechas REALES
+        if periodo == "hoy":
+            fecha_inicio_dt = hoy
+            fecha_fin_dt = hoy
+        elif periodo == "semana":
+            fecha_inicio_dt = hoy - timedelta(days=hoy.weekday())
+            fecha_fin_dt = hoy
+        elif periodo == "mes":
+            fecha_inicio_dt = hoy.replace(day=1)
+            fecha_fin_dt = hoy
+        else:
+            if fecha_inicio and fecha_fin:
+                fecha_inicio_dt = datetime.fromisoformat(fecha_inicio)
+                fecha_fin_dt = datetime.fromisoformat(fecha_fin)
+            else:
+                fecha_inicio_dt = hoy - timedelta(days=7)
+                fecha_fin_dt = hoy
+
+        # 1. Obtener datos REALES de días_operacion
+        pipeline_dias = [
+            {"$match": {
+                "fecha": {
+                    "$gte": fecha_inicio_dt,
+                    "$lte": fecha_fin_dt
+                }
+            }},
+            {"$group": {
+                "_id": None,
+                "total_servicios": {"$sum": "$servicios_atendidos"},
+                "total_ingresos": {"$sum": "$ingresos_totales"},
+                "dias_operacion": {"$sum": 1},
+                "promedio_diario": {"$avg": "$servicios_atendidos"},
+                "ganancia_neta": {"$sum": "$ganancia_neta"},
+                "costos_totales": {"$sum": "$costos_totales"}
+            }}
+        ]
+        
+        resultado_dias = list(collections["dias_operacion"].aggregate(pipeline_dias))
+        
+        # 2. Obtener datos REALES de servicios
+        pipeline_servicios = [
+            {"$match": {
+                "fecha": {
+                    "$gte": fecha_inicio_dt,
+                    "$lte": fecha_fin_dt
+                }
+            }},
+            {"$group": {
+                "_id": "$tipo_servicio",
+                "cantidad": {"$sum": "$cantidad"},
+                "ingresos": {"$sum": "$ingresos"},
+                "veces_contratado": {"$sum": 1}
+            }},
+            {"$sort": {"cantidad": -1}}
+        ]
+        
+        resultado_servicios = list(collections["servicios"].aggregate(pipeline_servicios))
+        
+        # 3. Obtener días REALES con datos
+        pipeline_dias_concretos = [
+            {"$match": {
+                "fecha": {
+                    "$gte": fecha_inicio_dt,
+                    "$lte": fecha_fin_dt
+                }
+            }},
+            {"$project": {
+                "fecha": 1,
+                "dia_semana": 1,
+                "servicios_atendidos": 1,
+                "ingresos_totales": 1,
+                "ganancia_neta": 1
+            }},
+            {"$sort": {"fecha": 1}}
+        ]
+        
+        dias_con_datos = list(collections["dias_operacion"].aggregate(pipeline_dias_concretos))
+
+        # PROCESAR DATOS REALES - SIN INVENTAR NADA
+        estadisticas_generales = {
+            "total_servicios": 0,
+            "total_ingresos": 0,
+            "ganancia_neta": 0,
+            "costos_totales": 0,
+            "dias_operacion": 0,
+            "promedio_diario": 0,
+            "ticket_promedio": 0
+        }
+
+        # Solo si hay datos REALES
+        if resultado_dias:
+            estadisticas_generales = {
+                "total_servicios": resultado_dias[0].get("total_servicios", 0),
+                "total_ingresos": resultado_dias[0].get("total_ingresos", 0),
+                "ganancia_neta": resultado_dias[0].get("ganancia_neta", 0),
+                "costos_totales": resultado_dias[0].get("costos_totales", 0),
+                "dias_operacion": resultado_dias[0].get("dias_operacion", 0),
+                "promedio_diario": round(resultado_dias[0].get("promedio_diario", 0), 2),
+                "ticket_promedio": round(
+                    resultado_dias[0].get("total_ingresos", 0) / 
+                    resultado_dias[0].get("total_servicios", 1), 2
+                ) if resultado_dias[0].get("total_servicios", 0) > 0 else 0
+            }
+
+        # Procesar servicios REALES
+        distribucion_tipos = []
+        for servicio in resultado_servicios:
+            distribucion_tipos.append({
+                "tipo_servicio": servicio["_id"],
+                "cantidad": servicio["cantidad"],
+                "ingresos": servicio["ingresos"],
+                "veces_contratado": servicio["veces_contratado"],
+                "precio_promedio": round(servicio["ingresos"] / servicio["cantidad"], 2) if servicio["cantidad"] > 0 else 0
+            })
+
+        # Procesar días REALES
+        evolucion_diaria = []
+        for dia in dias_con_datos:
+            evolucion_diaria.append({
+                "fecha": dia["fecha"].strftime("%Y-%m-%d"),
+                "dia_semana": dia["dia_semana"],
+                "servicios": dia["servicios_atendidos"],
+                "ingresos": dia["ingresos_totales"],
+                "ganancia": dia["ganancia_neta"]
+            })
+
+        # Servicio más popular REAL
+        servicio_mas_popular = None
+        if distribucion_tipos:
+            servicio_mas_popular = max(distribucion_tipos, key=lambda x: x["cantidad"])
+
+        # RESPUESTA 100% REAL
+        data = {
+            "metadata": {
+                "datos_reales": True,
+                "total_documentos_encontrados": len(dias_con_datos),
+                "periodo_consultado": {
+                    "tipo": periodo,
+                    "fecha_inicio": fecha_inicio_dt.strftime("%Y-%m-%d"),
+                    "fecha_fin": fecha_fin_dt.strftime("%Y-%m-%d")
+                },
+                "fechas_con_datos_reales": [dia["fecha"].strftime("%Y-%m-%d") for dia in dias_con_datos]
+            },
+            "estadisticas_generales": estadisticas_generales,
+            "distribucion_tipos": distribucion_tipos,
+            "evolucion_diaria": evolucion_diaria,
+            "servicio_mas_popular": servicio_mas_popular,
+            "total_tipos_servicios": len(distribucion_tipos)
+        }
+
+        return {
+            "success": True, 
+            "data": data, 
+            "error": None,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "success": False, 
+            "data": None, 
+            "error": f"Error real: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        }
